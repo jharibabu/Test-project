@@ -1,148 +1,274 @@
-# Java-App-Service-CI-CD-using-Maven-and-VSTS
+# Upload-Artifact v2
 
-In this example we will be creating a continuous integration  and continuous deployment for a Java application to Azure App Services using Visual Studio Team Services (VSTS) & Apache Maven.
+This uploads artifacts from your workflow allowing you to share data between jobs and store data once a workflow is complete.
 
-## Deploy and Configure an Azure Web App
+See also [download-artifact](https://github.com/actions/download-artifact).
 
-First we'll create an Azure Web App for us to depploy our Java Code to later.
+# What's new
 
-Navigate to the [Azure Portal](portal.azure.com)
+- Easier upload 
+  - Specify a wildcard pattern
+  - Specify an individual file
+  - Specify a directory (previously you were limited to only this option)
+  - Multi path upload
+    - Use a combination of individual files, wildcards or directories
+    - Support for excluding certain files
+- Upload an artifact without providing a name
+- Fix for artifact uploads sometimes not working with containers
+- Proxy support out of the box
+- Port entire action to typescript from a runner plugin so it is easier to collaborate and accept contributions
 
-Click the **+** icon to navigate to the new resources creation tab.
+Refer [here](https://github.com/actions/upload-artifact/tree/releases/v1) for the previous version
 
-In the "Web + Mobile" tab, select the Web App option.
+# Usage
 
-Enter a unique `App Name`, Select the appropriate `Subscription` and `Resource Group`.
+See [action.yml](action.yml)
 
-Create a basic App Service Plan for scaling your web app and click **Create**.
+### Upload an Individual File
+```yaml
+steps:
+- uses: actions/checkout@v2
 
-<img src="content/img1.png" width="400">
+- run: mkdir -p path/to/artifact
 
-Once the Web App has been successfully created navigate to the **Deployment Credentials** tab inside the Web App options. This will be used to publish files to the server directory.
+- run: echo hello > path/to/artifact/world.txt
 
-Create an `FTP/deployment username` and `password` and **Save**.
+- uses: actions/upload-artifact@v2
+  with:
+    name: my-artifact
+    path: path/to/artifact/world.txt
+```
 
-<img src="content/img2.png" width="600">
+### Upload an Entire Directory
 
-Navigate to the **Application Settings** tab.
+```yaml
+- uses: actions/upload-artifact@v2
+  with:
+    name: my-artifact
+    path: path/to/artifact/ # or path/to/artifact
+```
 
-Turn Java on by selecting the `Java Version`: Java 8. Use **Tomcat 8.5.6** as your Web Container.
+### Upload using a Wildcard Pattern
+```yaml
+- uses: actions/upload-artifact@v2
+  with:
+    name: my-artifact
+    path: path/**/[abc]rtifac?/*
+```
 
-**Save** the Web App Settings.
+### Upload using Multiple Paths and Exclusions
+```yaml
+- uses: actions/upload-artifact@v2
+  with:
+    name: my-artifact
+    path: |
+      path/output/bin/
+      path/output/test-results
+      !path/**/*.tmp
+```
 
-<img src="content/img3.png" width="800">
+For supported wildcards along with behavior and documentation, see [@actions/glob](https://github.com/actions/toolkit/tree/main/packages/glob) which is used internally to search for files.
 
-## Create a VSTS code project
+If a wildcard pattern is used, the path hierarchy will be preserved after the first wildcard pattern. 
 
-Navigate to your [Visual Studio Profile](https://app.vsaex.visualstudio.com) and sign in.
+```
+    path/to/*/directory/foo?.txt =>
+        ∟ path/to/some/directory/foo1.txt
+        ∟ path/to/some/directory/foo2.txt
+        ∟ path/to/other/directory/foo1.txt
 
-> To create a visual Studio account follow the documentation [here](https://www.visualstudio.com/team-services/).
+    would be flattened and uploaded as =>
+        ∟ some/directory/foo1.txt
+        ∟ some/directory/foo2.txt
+        ∟ other/directory/foo1.txt
+```
+If multiple paths are provided as input, the least common ancestor of all the search paths will be used as the root directory of the artifact. Exclude paths do not affect the directory structure.
 
-Select a team and create a **New Project**.
+Relative and absolute file paths are both allowed. Relative paths are rooted against the current working directory. Paths that begin with a wildcard character should be quoted to avoid being interpreted as YAML aliases.
 
-<img src="content/img4.png" width="800">
+The [@actions/artifact](https://github.com/actions/toolkit/tree/main/packages/artifact) package is used internally to handle most of the logic around uploading an artifact. There is extra documentation around upload limitations and behavior in the toolkit repo that is worth checking out.
 
-Name your Project. Select **Git** as your version control. Click **Create**
+### Customization if no files are found
 
-<img src="content/img5.png" width="800">
+If a path (or paths), result in no files being found for the artifact, the action will succeed but print out a warning. In certain scenarios it may be desirable to fail the action or suppress the warning. The `if-no-files-found` option allows you to customize the behavior of the action if no files are found.
 
-Once the project has bee8 created, Clone the repository locally using the repo URI.
-Push the contents of the sample Java App in this example or your own. Be sure to include a POM.xml file for Maven to build your application.
+```yaml
+- uses: actions/upload-artifact@v2
+  with:
+    name: my-artifact
+    path: path/to/artifact/
+    if-no-files-found: error # 'warn' or 'ignore' are also available, defaults to `warn` 
+```
 
-<img src="content/img6.png" width="800">
+### Conditional Artifact Upload
 
-On your local machine use the following git commands:
+To upload artifacts only when the previous step of a job failed, use [`if: failure()`](https://help.github.com/en/articles/contexts-and-expression-syntax-for-github-actions#job-status-check-functions):
 
-``` Powershell
+```yaml
+- uses: actions/upload-artifact@v2
+  if: failure()
+  with:
+    name: my-artifact
+    path: path/to/artifact/
+```
 
-PS C:\> git init
-PS C:\> git remote add origin https://<teamname>.visualstudio.com/_git/<projectname>
-PS C:\> git add .
-PS C:\> git commit -m "Working Java App"
-PS C:\> git push origin master
+### Uploading without an artifact name
+
+You can upload an artifact without specifying a name
+```yaml
+- uses: actions/upload-artifact@v2
+  with:
+    path: path/to/artifact/world.txt
+```
+
+If not provided, `artifact` will be used as the default name which will manifest itself in the UI after upload.
+
+### Uploading to the same artifact
+
+With the following example, the available artifact (named `artifact` by default if no name is provided) would contain both `world.txt` (`hello`) and `extra-file.txt` (`howdy`).
+
+```yaml
+- run: echo hi > world.txt
+- uses: actions/upload-artifact@v2
+  with:
+    path: world.txt
+
+- run: echo howdy > extra-file.txt
+- uses: actions/upload-artifact@v2
+  with:
+    path: extra-file.txt
+
+- run: echo hello > world.txt
+- uses: actions/upload-artifact@v2
+  with:
+    path: world.txt
+```
+
+> **_Warning:_**  Be careful when uploading to the same artifact via multiple jobs as artifacts may become corrupted 
+
+Each artifact behaves as a file share. Uploading to the same artifact multiple times in the same workflow can overwrite and append already uploaded files
+
+```yaml
+    strategy:
+      matrix:
+          node-version: [8.x, 10.x, 12.x, 13.x]
+    steps:
+        - name: 'Create a file'
+          run: echo ${{ matrix.node-version }} > my_file.txt
+        - name: 'Accidently upload to the same artifact via multiple jobs'
+          uses: 'actions/upload-artifact@v2'
+          with:
+              name: my-artifact
+              path: ${{ github.workspace }}
+```
+
+In the above example, four jobs will upload four different files to the same artifact but there will only be one file available when `my-artifact` is downloaded. Each job overwrites what was previously uploaded. To ensure that jobs don't overwrite existing artifacts, use a different name per job.
+
+```yaml
+          uses: 'actions/upload-artifact@v2'
+          with:
+              name: my-artifact ${{ matrix.node-version }}
+              path: ${{ github.workspace }}
+```
+
+### Environment Variables and Tilde Expansion
+
+You can use `~` in the path input as a substitute for `$HOME`. Basic tilde expansion is supported.
+
+```yaml
+  - run: |	
+      mkdir -p ~/new/artifact
+      echo hello > ~/new/artifact/world.txt
+  - uses: actions/upload-artifact@v2
+    with:	
+      name: 'Artifacts-V2'	
+      path: '~/new/**/*'
+```
+
+Environment variables along with context expressions can also be used for input. For documentation see [context and expression syntax](https://help.github.com/en/actions/reference/context-and-expression-syntax-for-github-actions).
+
+```yaml
+    env:
+      name: my-artifact
+    steps:
+    - run: |	
+        mkdir -p ${{ github.workspace }}/artifact
+        echo hello > ${{ github.workspace }}/artifact/world.txt
+    - uses: actions/upload-artifact@v2
+      with:	
+        name: ${{ env.name }}-name	
+        path: ${{ github.workspace }}/artifact/**/*
+```
+
+### Retention Period
+
+Artifacts are retained for 90 days by default. You can specify a shorter retention period using the `retention-days` input:
+
+```yaml
+  - name: 'Create a file'
+    run: echo "I won't live long" > my_file.txt
+
+  - name: 'Upload Artifact'
+    uses: actions/upload-artifact@v2
+    with:
+      name: my-artifact
+      path: my_file.txt
+      retention-days: 5
 
 ```
 
-Once your initial commit is completed, navigate to the **Code** tab on the top menu. Your code will be viewable now in VSTS.
+The retention period must be between 1 and 90 inclusive. For more information see [artifact and log retention policies](https://docs.github.com/en/free-pro-team@latest/actions/reference/usage-limits-billing-and-administration#artifact-and-log-retention-policy).
 
-<img src="content/img7.png" width="800">
+## Where does the upload go?
 
-## Create a Maven build definition in VSTS
+At the bottom of the workflow summary page, there is a dedicated section for artifacts. Here's a screenshot of something you might see:
 
-In this step we will create a Build definition in VSTS that compiles our java code using Apache Maven. We will also configure the build tasks to be trigger continuous with commits so a build in processed for all repo commits.
+<img src="https://user-images.githubusercontent.com/16109154/103645952-223c6880-4f59-11eb-8268-8dca6937b5f9.png" width="700" height="300">
 
-Navigate to **Build & Release** in the top menu.
+There is a trashcan icon that can be used to delete the artifact. This icon will only appear for users who have write permissions to the repository.
 
-Select an empty Build Definition template.
+The size of the artifact is denoted in bytes. The displayed artifact size denotes the raw uploaded artifact size (the sum of all the individual files uploaded during the workflow run for the artifact), not the compressed size. When you click to download an artifact from the summary page, a compressed zip is created with all the contents of the artifact and the size of the zip that you download may differ significantly from the displayed size. Billing is based on the raw uploaded size and not the size of the zip.
 
-<img src="content/img8.png" width="800">
+# Limitations
 
-Add the following tasks to your template. Use the default settings
-* `Get Source` - This pulls the code repo from your targeted repository. By default it will be auto configured for the project repo.
-* `Maven pom.xml` - This  is the Project Object Model that compiles your java app's dependencies
-* `Publish Artifact` - this uploads the artifacts from the build to a drop directory to be deployed to your web app.
+### Zipped Artifact Downloads
 
-<img src="content/img9.png" width="800">
+During a workflow run, files are uploaded and downloaded individually using the `upload-artifact` and `download-artifact` actions. However, when a workflow run finishes and an artifact is downloaded from either the UI or through the [download api](https://developer.github.com/v3/actions/artifacts/#download-an-artifact), a zip is dynamically created with all the file contents that were uploaded. There is currently no way to download artifacts after a workflow run finishes in a format other than a zip or to download artifact contents individually. One of the consequences of this limitation is that if a zip is uploaded during a workflow run and then downloaded from the UI, there will be a double zip created. 
 
-For more Maven build options go [here](https://www.visualstudio.com/en-us/docs/build/steps/build/maven).
+### Permission Loss
 
-Navigate to the **Triggers** tab for the Build Definition Template.
+:exclamation: File permissions are not maintained during artifact upload :exclamation: For example, if you make a file executable using `chmod` and then upload that file, post-download the file is no longer guaranteed to be set as an executable.
 
-Enable **Continuous Integration** and connect it with your project master branch. This will trigger the build to start for all commits.
+### Case Insensitive Uploads
 
-<img src="content/img10.png" width="800">
+:exclamation: File uploads are case insensitive :exclamation: If you upload `A.txt` and `a.txt` with the same root path, only a single file will be saved and available during download.
 
-Click **Save & Queue** to test your build.
+### Maintaining file permissions and case sensitive files
 
-<img src="content/img11.png" width="800">
+If file permissions and case sensitivity are required, you can `tar` all of your files together before artifact upload. Post download, the `tar` file will maintain file permissions and case sensitivity.
 
-You will see a log from the Agent that built your code. If any errors are generated extend the point of failure to debug.
+```yaml
+  - name: 'Tar files'
+    run: tar -cvf my_files.tar /path/to/my/directory
 
-## Create an App Services release definition in VSTS
+  - name: 'Upload Artifact'
+    uses: actions/upload-artifact@v2
+    with:
+      name: my-artifact
+      path: my_files.tar    
+```
+### Too many uploads resulting in 429 responses
 
-Now that we have a build definition, we will generate a release definition the deploys our successful builds to our Web App in Azure.
+A very minute subset of users who upload a very very large amount of artifacts in a short period of time may see their uploads throttled or fail because of `Request was blocked due to exceeding usage of resource 'DBCPU' in namespace` or `Unable to copy file to server StatusCode=TooManyRequests`.
 
-Navigate to the **Releases** tab and select **New Release Definition**.
+To reduce the chance of this happening, you can reduce the number of HTTP calls made during artifact upload by zipping or archiving the contents of your artifact before an upload starts. As an example, imagine an artifact with 1000 files (each 10 Kb in size). Without any modification, there would be around 1000 HTTP calls made to upload the artifact. If you zip or archive the artifact beforehand, the number of HTTP calls can be dropped to single digit territory. Measures like this will significantly speed up your upload and prevent uploads from being throttled or in some cases fail.
 
-Select the **Deploy to Azure App Service template**.
+## Additional Documentation
 
-<img src="content/img12.png" width="800">
+See [persisting workflow data using artifacts](https://help.github.com/en/actions/configuring-and-managing-workflows/persisting-workflow-data-using-artifacts) for additional examples and tips.
 
-In the definition select the `Azure Subscription` and the `App Service Name` of your web app you created earlier.
+See extra documentation for the [@actions/artifact](https://github.com/actions/toolkit/blob/master/packages/artifact/docs/additional-information.md) package that is used internally regarding certain behaviors and limitations.
 
-For the `Destination or Folder` setting **Browse** to the `hello.war` file that was generated from the Build.
+# License
 
-Click **OK**.
-
-<img src="content/img13.png" width="400">
-
-Navigate to the **Triggers** tab in the Release Definition.
-
-Enable **Continuous Deployment** and link the Build Definition you previously created as your artifact source. This will configure your release to be triggered by a successful Build definition.
-
-<img src="content/img14.png" width="800">
-
-Finally *Save* and click **Queue Release**.
-
-## Validating Web App Deployments
-
-Navigate to the Azure portal and click your Web App URL. You will see this in your web app overview tab.
-
-<img src="content/img15.png" width="800">
-
-If the Release was successful you will see the sample Java App being displayed.
-
-<img src="content/img16.png" width="600">
-
----
-If you were unsuccessful verify that your Release Definition was successful in VSTS. Otherwise navigate to the site's Kudu Dashboard [yourwebappname].scm.azurewebsites.net 
-
-<img src="content/img17.png" width="800">
-
-Navigate to **Deployments** and you are able to see the which deployments were successful with the status code and Buil/Release ID.
-
-<img src="content/img18.png" width="800">
-
-Another common fix would be to navigate to the **Debug Console** in the Kudu Dashboard and rename your Hello.war file to ROOT.war usually found in this directory - D:\home\site\wwwroot\webapps> 
-
-<img src="content/img19.png" width="800">
+The scripts and documentation in this project are released under the [MIT License](LICENSE)
